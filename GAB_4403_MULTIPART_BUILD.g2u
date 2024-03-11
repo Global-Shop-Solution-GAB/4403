@@ -1,0 +1,165 @@
+Program.Sub.Preflight.Start
+Variable.Global.sRoutRev.Declare(String)
+Variable.Global.sLoc.Declare(String)
+Variable.Global.sUserInfo.Declare(String)
+
+Variable.Global.sDate.Declare(String)
+Variable.Global.sTime.Declare(String)
+
+Variable.Global.sRouter.Declare(String)
+Variable.Global.sPartRev.Declare(String)
+Variable.Global.iQty.Declare(Long,0)
+Variable.Global.sFullPart.Declare(String)
+Variable.Global.iCusQty.Declare(Long,0)
+Variable.Global.sFullRtr.Declare(String)
+'Function.Intrinsic.Debug.SetScriptVersion("1.0.63","True")
+Variable.Global.sPart.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+f.Intrinsic.Control.Try
+v.Local.sError.Declare
+'for Mercedes Textiles
+'by Don Finch
+'9/6/2016
+'this uses the part number on the work order and the user_info2 field on inventory master
+'to build a list of parts that should always run together
+'quantities are all set to zero
+'standard cost is a must for this to function properly at WIP to FG (inventory cost)
+'attach to hooks 16630 and 16680
+
+v.Local.sJob.Declare
+v.Local.sSuffix.Declare
+v.Local.sSql.Declare
+v.Local.sSql2.Declare
+v.Local.sReturn.Declare
+v.Local.iRet.Declare
+F.Intrinsic.Control.If(V.Caller.Hook,=,16630)
+	V.Passed.000092.Set("Get Part List")
+	f.Intrinsic.Control.End
+
+f.Intrinsic.Control.EndIf
+
+Function.Intrinsic.UI.InvokeWaitDialog("please wait.....","Processing Records")
+
+v.Local.sJob.Set(v.Passed.000003)
+v.Local.ssuffix.Set(v.Passed.000004)
+v.Global.sRouter.Set(v.Passed.000006)
+v.Global.sRoutRev.Set(v.Passed.000007)
+v.Global.sPart.Set(V.Passed.000012)
+v.Global.sPartRev.Set(v.Passed.000013)
+v.Global.sLoc.Set(V.Passed.000015)
+V.Global.iQty.Set(V.Passed.000043)
+v.Global.iCusQty.Set(v.Passed.000044)
+f.Intrinsic.String.GSSPartString(v.Global.sPart,v.Global.sRoutRev,v.Global.sFullPart)
+f.Intrinsic.String.GSSPartString(v.Global.sRouter,v.Global.sRoutRev,v.Global.sFullRtr)
+v.Passed.000006.Set("")
+v.Passed.000007.Set("")
+v.Passed.000012.Set("")
+v.Passed.000013.Set("")
+f.Intrinsic.String.GSSPartString(v.Global.sPart,v.Global.sPartRev,v.Global.sPart)
+'set the date and time values
+f.Intrinsic.String.DateString(v.Ambient.Date,V.Global.sDate)
+F.Intrinsic.String.TimeStringSec(V.Ambient.Time,v.Global.sTime)
+f.Intrinsic.String.Concat(v.Global.sTime,"00",V.Global.sTime)
+'open connection
+F.ODBC.Connection!coredb.openconnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass)
+
+''check to make sure that multi-parts haven't already been added, or they will get duplicated
+f.Intrinsic.String.Build("select count(WO) from V_JOB_MULT_PARTS_LN where WO = '{0}' and WO_SUFFIX = '{1}'",v.Local.sJob,V.Local.sSuffix,v.Local.sSql)
+f.ODBC.Connection!coredb.executeandreturn(v.Local.sSql,v.Local.iRet)
+f.Intrinsic.Control.If(v.Local.iRet,<,1)
+
+
+	'USE PART AND LOCAITON TO GET TEXT_INFO2
+	f.Intrinsic.String.Build("select text_info2 from v_inventory_mst2 where PART = '{0}' AND LOCATION = '{1}'",V.Global.sPart,V.Global.sLoc,V.Local.sSql)
+	F.ODBC.Connection!coredb.ExecuteAndReturn(V.Local.sSql,V.Local.sReturn)
+	f.Intrinsic.control.If(v.Local.sReturn,>,"")
+		'USE TEXT_INFO TO GET ALL LIKE PARTS
+		f.Intrinsic.String.Build("SELECT im.part, im.location, im.description from inventory_mstr im left join inventory_mst2 im2 on im.part = im2.part and im.location = im2.location where im2.text_info1 = '{0}' and im.location = '{1}'",v.Local.sReturn,V.Global.sLoc,V.Local.sSql)
+		f.ODBC.Connection!coredb.OpenRecordsetRO("rstinv",v.Local.sSql)
+		f.Intrinsic.Control.If(v.ODBC.coredb!rstinv.EOF,=,False)
+			F.ODBC.coredb!rstinv.MoveFirst
+		'for every like part, add a line the multi_part_ln table
+			f.ODBC.Connection!coredb.OpenRecordsetRW("rstln","select * from job_mult_parts_ln")
+			f.Intrinsic.Control.DoUntil(v.ODBC.coredb!rstinv.EOF,=,True)
+				f.ODBC.coredb!rstln.AddNew
+				f.ODBC.coredb!rstln.Set!WO(V.Local.sJob)
+				f.ODBC.coredb!rstln.Set!WO_SUFFIX(v.Local.sSuffix)
+				f.ODBC.coredb!rstln.Set!PART(v.ODBC.coredb!rstinv.FieldVal!PART)
+				f.ODBC.coredb!rstln.Set!LOC(V.Global.sLoc)
+				f.ODBC.coredb!rstln.Set!SEQ("0000")
+				F.ODBC.coredb!rstln.Set!DESCR(V.ODBC.coredb!rstinv.FieldVal!DESCRIPTION)
+		'		f.Intrinsic.Control.If(v.ODBC.coredb!rstinv.FieldVal!PART,=,v.Global.sFullPart)
+		'			f.ODBC.coredb!rstln.Set(v.Global.iCusQty)
+		'		f.Intrinsic.Control.Else
+		'			F.ODBC.coredb!rstln.Set!QTY(0)
+		'		f.Intrinsic.Control.EndIf
+				F.ODBC.coredb!rstln.Set!QTY(0)
+				F.ODBC.coredb!rstln.Set!SCHEDULE("N")
+				F.ODBC.coredb!rstln.Set!LN_TYPE("P")
+				F.ODBC.coredb!rstln.Set!LAST_CHG_BY(V.Caller.User)
+				F.ODBC.coredb!rstln.Set!LAST_CHG_DATE(V.Global.sDate)
+				F.ODBC.coredb!rstln.Set!LAST_CHG_TIME(V.Global.sTime)
+				F.ODBC.coredb!rstln.Update
+				F.ODBC.coredb!rstinv.MoveNext
+				F.Intrinsic.Control.Loop
+				
+				
+			F.Intrinsic.Control.EndIf
+			f.ODBC.coredb!rstinv.Close
+			'adding the router to the multipart work order - there will only be one so no loop needed.
+			F.Intrinsic.String.GSSPartString(V.Global.sRouter,V.Global.sRoutRev,V.Global.sRouter)
+			f.Intrinsic.String.Build("select router, description_router from v_router_header where router = '{0}'",v.Global.sRouter,v.Local.sSql)
+			f.ODBC.Connection!coredb.ExecuteAndReturn(v.Local.sSql,v.Local.sReturn)
+			F.Intrinsic.String.Split(V.Local.sReturn,"*!*",V.Local.sReturn)
+				f.ODBC.coredb!rstln.AddNew
+				f.ODBC.coredb!rstln.Set!WO(V.Local.sJob)
+				f.ODBC.coredb!rstln.Set!WO_SUFFIX(v.Local.sSuffix)
+				f.ODBC.coredb!rstln.Set!LOC(V.Global.sLoc)
+				f.ODBC.coredb!rstln.Set!PART(v.Global.sFullRtr)	
+				f.ODBC.coredb!rstln.Set!ROUTER(V.Local.sReturn(0))
+				f.ODBC.coredb!rstln.Set!SEQ("0000")
+				F.ODBC.coredb!rstln.Set!QTY(v.Global.iQty)
+				F.ODBC.coredb!rstln.Set!RTR_QTY(1.0000)
+				F.ODBC.coredb!rstln.Set!RTR_DESC(V.Local.sReturn(1))
+				F.ODBC.coredb!rstln.Set!SCHEDULE("Y")
+				F.ODBC.coredb!rstln.Set!LN_TYPE("R")
+				F.ODBC.coredb!rstln.Set!LAST_CHG_BY(V.Caller.User)
+				F.ODBC.coredb!rstln.Set!LAST_CHG_DATE(V.Global.sDate)
+				F.ODBC.coredb!rstln.Set!LAST_CHG_TIME(V.Global.sTime)
+				F.ODBC.coredb!rstln.Update		
+			
+			'closing connection
+			F.ODBC.coredb!rstln.Close
+		f.Intrinsic.Control.EndIf
+	
+f.Intrinsic.Control.EndIf
+
+
+F.ODBC.Connection!coredb.Close
+
+Function.Intrinsic.UI.CloseWaitDialog
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_4403_MULTIPART_BUILD.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+f.Intrinsic.UI.Msgbox(v.Local.sError)
+F.Intrinsic.Control.End
+Program.Sub.catching.End
+
+Program.Sub.Comments.Start
+${$0$}$AUTO POPULATE MULTI PART$}$DFINCH$}$8/25/2016 8:41:59 PM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$Using the inventory master user_info_1, this script gets the part# from the header of the work order, returns the info_1 field then finds all inventory items with the same value in info_1.  It then searches for a router with a base segment of the main part#.
+
+Parts are added with zero qty.  The router is added with a user input quantity and only the router is scheduled.
+Program.Sub.Comments.End
